@@ -5,14 +5,14 @@ module Jarjar::AIContract {
     use sui::address::Address;
     use sui::option::{self, Option};
     use sui::vector;
-    use sui::balance::Balance;
+    use sui::storage;
 
-    struct Submission has key, store {
+    struct Submission has key {
         id: u64,
         data: vector<u8>,
         result_link: Option<Address>,
         result_data: Option<vector<u8>>,
-        owner: Address,
+        metadata: Option<vector<u8>>,
     }
 
     event SubmissionEvent {
@@ -20,12 +20,7 @@ module Jarjar::AIContract {
         data: vector<u8>,
     }
 
-    event RefundEvent {
-        id: u64,
-        amount: u64,
-    }
-
-    struct Registry has key, store {
+    struct Registry has key {
         submissions: vector<Submission>,
     }
 
@@ -36,7 +31,7 @@ module Jarjar::AIContract {
         tx_context::create(&registry, ctx);
     }
 
-    public fun new_submission(ctx: &mut TxContext, data: vector<u8>, payment: Coin<Coin<SUI>>, owner: Address) {
+    public fun new_submission(ctx: &mut TxContext, data: vector<u8>, payment: Coin<Coin<SUI>>) {
         // Ensure payment is received (0.01 SUI)
         assert!(coin::value(&payment) >= 1_000_000, 0); // 1_000_000 microSUI = 0.01 SUI
         coin::burn(payment); // Burn the payment
@@ -44,13 +39,13 @@ module Jarjar::AIContract {
         // Generate a new submission ID
         let id = tx_context::generate_random_number(ctx);
         
-        // Create a new submission
+        // Create a new submission (Can cut a timestamp)
         let submission = Submission {
             id,
             data: data,
             result_link: option::none<Address>(),
             result_data: option::none<vector<u8>>(),
-            owner,
+            metadata: option::none<vector<u8>>(),
         };
         
         // Emit event
@@ -76,11 +71,7 @@ module Jarjar::AIContract {
                 let submission = &mut registry.submissions[i];
                 submission.result_link = option::some(link);
                 submission.result_data = option::some(result_data);
-
-                // Store metadata if needed
-                if (!vector::is_empty(&metadata)) {
-                    submission.data = metadata;
-                }
+                submission.metadata = option::some(metadata);
             },
             option::none => {
                 // Handle error: submission not found
@@ -91,6 +82,7 @@ module Jarjar::AIContract {
 
     public fun delete_submission(ctx: &mut TxContext, id: u64) {
         let registry = tx_context::borrow_global_mut<Registry>(ctx);
+        
         let index = vector::index_where(&registry.submissions, fun (s: &Submission): bool {
             s.id == id
         });
@@ -98,18 +90,9 @@ module Jarjar::AIContract {
         match index {
             option::some(i) => {
                 let submission = vector::swap_remove(&mut registry.submissions, i);
-                // Refund storage fees
-                let refund_amount = tx_context::delete_object(ctx, &submission);
-                let owner = submission.owner;
-                let refund_coin = Coin::new(refund_amount, owner);
-
-                // Emit refund event
-                event::emit_event(&RefundEvent {
-                    id,
-                    amount: refund_amount,
-                });
-
-                tx_context::transfer(refund_coin, owner, ctx);
+                let storage_refund = storage::delete(&submission);
+                // Process the storage refund as needed
+                // Example: transferring the refund to the user
             },
             option::none => {
                 // Handle error: submission not found
